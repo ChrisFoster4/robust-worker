@@ -1,3 +1,4 @@
+from globals import *
 import subprocess
 import socket
 
@@ -21,3 +22,16 @@ def send_broadcast(message):
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     s.sendto(message.encode(), dest)
+
+
+def send_message_to_colleague(colleague, message):
+    dest = (colleague, COLLEAGUE_LISTEN_PORT)
+    if colleague is None:
+        print("Can't send message to colleague as they are None")
+        return
+
+    print("Sending message to colleague:", colleague)
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    s.sendto(message.encode(), dest)
+

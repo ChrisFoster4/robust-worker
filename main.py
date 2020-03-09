@@ -1,5 +1,5 @@
 from worker import Worker
-from netutils import is_alive, send_broadcast
+from netutils import is_alive, send_broadcast, send_message_to_colleague
 from tests import tests
 from globals import *
 from master import Master
@@ -11,6 +11,7 @@ import time
 unprocessed_broadcasts = []
 messages_from_colleague = []
 messages_from_master = []
+current_colleague_progress = []
 
 
 def broadcast_listener():
@@ -45,7 +46,7 @@ def colleague_listener():
     s.bind(('', COLLEAGUE_LISTEN_PORT))
     while True:
         message, address = s.recvfrom(COLLEAGUE_LISTEN_PORT)
-        print("Received message from colleague", message.decode())
+        # print("Received message from colleague", message.decode())
         messages_from_colleague.append((message.decode(), address))
 
 
@@ -58,31 +59,32 @@ def send_message_to_master(message):
     s.sendto(message.encode(), dest)
 
 
-def send_message_to_colleague(message):
-    dest = (COLLEAGUE, COLLEAGUE_LISTEN_PORT)
-    if COLLEAGUE is None:
-        print("Can't send message to colleague as they are None")
-        return
-
-    print("Sending message to colleague:", COLLEAGUE)
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    s.sendto(message.encode(), dest)
-
-
 def confirm_colleage(colleague_addr):
-    COLLEAGUE = colleague_addr
-    send_message_to_colleague(COLLEAGUE_ADVERT_CONFIRMATION)
+    send_message_to_colleague(colleague_addr, COLLEAGUE_ADVERT_CONFIRMATION)
 
 
 def process_colleague_messages():
     if not messages_from_colleague:
         return
 
-    for message, from_addr in messages_from_colleague:
+    while len(messages_from_colleague) != 0:
+
+        message, from_addr = messages_from_colleague.pop()
+
         if message == COLLEAGUE_ADVERT_RESPONSE:
             print("Found avaliable colleague. Confirming with them now.")
             confirm_colleage(from_addr)
+        elif message == COLLEAGUE_REQUEST_PROGRESS:
+            send_message_to_colleague(COLLEAGUE, COLLEAGUE_PROGRESS_PREFIX + str(w.get_progress()))
+        elif message.startswith(COLLEAGUE_PROGRESS_PREFIX):
+            progress = message[:-len(COLLEAGUE_PROGRESS_PREFIX)]
+            print("Colleague sent their progress:", progress)
+            global current_colleague_progress
+            current_colleague_progress = progress
+            assert(len(current_colleague_progress) != 0)
+        else:
+            print("Unhandeled message from colleague:", message, " exiting now...")
+            exit(1)
 
 
 def process_broadcast():
@@ -95,21 +97,16 @@ def process_broadcast():
 
 def send_progress(worker):
     progress = worker.get_progress()
-    send_message_to_colleague(''.join(progress))
-
+    send_message_to_colleague(COLLEAGUE, ''.join(progress))
 
 def request_progress():
     if COLLEAGUE is None:
         pass
-    send_message_to_colleague(COLLEAGUE_REQUEST_PROGRESS)
-    pass
+    send_message_to_colleague(COLLEAGUE, COLLEAGUE_REQUEST_PROGRESS)
 
 
 def respond_to_advert(advertiser_address):
-    global COLLEAGUE
-    COLLEAGUE = advertiser_address
-    send_message_to_colleague(COLLEAGUE_ADVERT_RESPONSE)
-
+    send_message_to_colleague(advertiser_address, COLLEAGUE_ADVERT_RESPONSE)
 
 def pick_colleague():
     pass
@@ -163,34 +160,46 @@ def slave_main():
     start_colleage_and_master_listener()
     print("Listener threads all spawned successfully")
 
-
     global COLLEAGUE
     if LOCALHOST_NAME == "robust_1":
         COLLEAGUE = "robust_2"
-        # slave_main()
-        # assert (is_alive(COLLEAGUE))
-        # time.sleep(1)
-        # send_broadcast("hello world")
-        # send_broadcast(BROADCAST_ASK_FOR_COLLEAGUE)
-        # send_message_to_colleague("hello there")
-        # send_message_to_master(SLAVE_REQ_WORK)
-        # ask_for_colleague()
     elif LOCALHOST_NAME == "robust_2":
         COLLEAGUE = "robust_1"
-        assert (is_alive(COLLEAGUE))
 
-        # time.sleep(1)
-        # send_broadcast("hello hell")
-        # send_message_to_colleague("General Kenobi")
-
+    global w
     w = Worker()
+    since_sync = 0
     while True:
         if len(messages_from_master) == 0:
             send_message_to_master(SLAVE_REQ_WORK)
             time.sleep(1)
         else:
+            if since_sync > SYNC_THRESHOLD:
+
+                global current_colleague_progress
+                foobar = current_colleague_progress
+                current_colleague_progress = []
+                send_message_to_colleague(COLLEAGUE, COLLEAGUE_REQUEST_PROGRESS)
+                recieved = False
+                for x in range(0,5):
+                    process_colleague_messages()
+                    time.sleep(1)
+                    if len(current_colleague_progress) != 0:
+                        recieved=True
+                        break
+                if not recieved:
+                    print("Didn't recieve colleague progress as expected!")
+                    print("Checking if they are alive!")
+                    if not is_alive(COLLEAGUE):
+                        print("Colleague:", COLLEAGUE, " appears to have died!!")
+                        print("Progress was : ", foobar)
+                    exit(1)
+
+
+            since_sync = since_sync + 1
             block_start = messages_from_master.pop(0)[0]
             w.work(block_start)
+
 
 
 def main():
@@ -202,6 +211,5 @@ def main():
         slave_main()
 
 
-tests()
-#
-# main()
+# tests()
+main()
